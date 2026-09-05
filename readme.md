@@ -4,10 +4,6 @@ A FastAPI-based backend for an expense tracking and analytics application. The
 project provides a layered architecture with API routing, business logic,
 data access, and SQLite persistence.
 
-> **Project status:** Early development. The create-expense endpoint is
-> functional with full database persistence. Read, update, delete, analytics,
-> authentication, and error handling are not yet implemented.
-
 ## Technology stack
 
 - Python 3.10 or newer (verified with Python 3.13.5)
@@ -29,7 +25,7 @@ expense-analytics-api/
 |   |-- main.py                     # FastAPI application entrypoint
 |   |-- api/
 |   |   |-- __init__.py
-|   |   `-- expenses.py             # Expense router (POST /expenses)
+|   |   `-- expenses.py             # Expense router (CRUD + list endpoints)
 |   |-- db/
 |   |   |-- __init__.py
 |   |   `-- database.py             # SQLite connection and table init
@@ -47,7 +43,8 @@ expense-analytics-api/
 |       `-- expense_service.py      # Business logic layer
 |-- tests/
 |   |-- __init__.py
-|   `-- test_health.py              # Health endpoint test
+|   |-- conftest.py                 # Shared fixtures (test client, temp DB)
+|   `-- test_expenses.py            # Full test suite
 |-- .gitignore
 |-- expenses.db                     # SQLite database (auto-created, git-ignored)
 |-- requirements.txt
@@ -160,7 +157,7 @@ Example request:
 ```bash
 curl -X POST http://127.0.0.1:8000/expenses \
   -H "Content-Type: application/json" \
-  -d '{"amount": "249.99", "category": "Groceries", "description": "Weekly grocery shopping", "expense_date": "2026-09-04"}'
+  -d '{"amount": "249.99", "category": "Groceries", "description": "Weekly grocery shopping", "expense_date": "2026-09-06"}'
 ```
 
 Successful response (`201 Created`):
@@ -171,9 +168,92 @@ Successful response (`201 Created`):
   "amount": "249.99",
   "category": "Groceries",
   "description": "Weekly grocery shopping",
-  "expense_date": "2026-09-04"
+  "expense_date": "2026-09-06"
 }
 ```
+
+### Get expense by ID
+
+```http
+GET /expenses/{expense_id}
+```
+
+Example request:
+
+```bash
+curl http://127.0.0.1:8000/expenses/1
+```
+
+Successful response (`200 OK`):
+
+```json
+{
+  "id": 1,
+  "amount": "249.99",
+  "category": "Groceries",
+  "description": "Weekly grocery shopping",
+  "expense_date": "2026-09-06"
+}
+```
+
+Returns `404 Not Found` if the expense does not exist.
+
+### List expenses
+
+```http
+GET /expenses
+GET /expenses?category=Food
+GET /expenses?start_date=2026-09-01&end_date=2026-09-30
+GET /expenses?category=Food&start_date=2026-09-01&end_date=2026-09-30
+```
+
+Supports optional query parameters for filtering:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `category` | String | Filter by exact category match (1-50 chars) |
+| `start_date` | Date | Filter expenses on or after this date |
+| `end_date` | Date | Filter expenses on or before this date |
+
+Example request:
+
+```bash
+curl "http://127.0.0.1:8000/expenses?category=Food&start_date=2026-09-01&end_date=2026-09-30"
+```
+
+Successful response (`200 OK`):
+
+```json
+[
+  {
+    "id": 1,
+    "amount": "249.99",
+    "category": "Food",
+    "description": "Weekly grocery shopping",
+    "expense_date": "2026-09-06"
+  }
+]
+```
+
+Returns `400 Bad Request` if `start_date` is after `end_date`.
+
+Expenses are sorted by date descending (most recent first).
+
+### Delete expense
+
+```http
+DELETE /expenses/{expense_id}
+```
+
+Example request:
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/expenses/1
+```
+
+Successful response (`204 No Content`): empty body.
+
+Returns `404 Not Found` if the expense does not exist.
 
 ## Expense schemas
 
@@ -187,7 +267,9 @@ for expense endpoints.
 | `amount` | Decimal | Must be greater than `0`, max 12 digits, 2 decimal places |
 | `category` | String | Between 1 and 50 characters |
 | `description` | String | Between 1 and 255 characters |
-| `expense_date` | Date | ISO 8601 date, such as `2026-09-04` |
+| `expense_date` | Date | ISO 8601 date, such as `2026-09-06` |
+
+Text fields are stripped of leading/trailing whitespace and rejected if empty.
 
 ### `ExpenseResponse`
 
@@ -215,8 +297,27 @@ For compact output:
 python -m pytest -q
 ```
 
-The current test suite verifies that `GET /health` returns status code `200` and
-the expected JSON response.
+### Test coverage
+
+The test suite covers all endpoints and edge cases:
+
+| Test | Description |
+| --- | --- |
+| `test_health_check` | Health endpoint returns `200` with `{"status": "ok"}` |
+| `test_create_expense` | Creating an expense returns `201` with correct data |
+| `test_create_expense_rejects_negative_amount` | Negative amounts are rejected with `422` |
+| `test_create_expense_rejects_blank_category` | Whitespace-only categories are rejected with `422` |
+| `test_get_expense` | Fetching an existing expense returns `200` |
+| `test_get_missing_expense_returns_404` | Fetching a nonexistent ID returns `404` |
+| `test_list_expenses` | Listing all expenses returns all records |
+| `test_filter_expenses_by_category` | Category filtering returns only matching expenses |
+| `test_filter_expenses_by_date_range` | Date range filtering returns only expenses within range |
+| `test_invalid_date_range_returns_400` | `start_date > end_date` returns `400` |
+| `test_delete_expense` | Deleting returns `204`, subsequent GET returns `404` |
+| `test_delete_missing_expense_returns_404` | Deleting a nonexistent ID returns `404` |
+
+Tests use an isolated temporary database per test via `conftest.py` fixtures to
+avoid any side effects between tests.
 
 ## Configuration and persistence
 
@@ -226,18 +327,6 @@ root. The table is created automatically on startup via `initialize_database()`.
 
 No environment variables are required. The database path is resolved relative to
 the project root in `app/db/database.py`.
-
-## Current development roadmap
-
-Likely next steps for the API are:
-
-1. Add `GET /expenses` (list all) and `GET /expenses/{id}` (get one) endpoints.
-2. Add `PUT /expenses/{id}` (update) and `DELETE /expenses/{id}` (delete) endpoints.
-3. Add filtering, sorting, and aggregation for expense analytics.
-4. Add consistent error handling and custom exception responses.
-5. Add CORS middleware and environment-based configuration.
-6. Expand unit and integration test coverage.
-7. Add authentication and authorization if expenses are user-specific.
 
 ## License
 

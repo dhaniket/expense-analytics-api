@@ -1,7 +1,12 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 
 class ExpenseCreate(BaseModel):
@@ -23,6 +28,25 @@ class ExpenseCreate(BaseModel):
     )
 
     expense_date: date
+
+    @field_validator(
+        "category",
+        "description",
+        mode="before",
+    )
+    @classmethod
+    def validate_non_empty_text(
+        cls,
+        value: str,
+    ) -> str:
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        if not value:
+            raise ValueError("must not be empty")
+
+        return value
 
 
 class ExpenseResponse(BaseModel):
