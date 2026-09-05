@@ -1,12 +1,12 @@
 # Expense Analytics API
 
 A FastAPI-based backend for an expense tracking and analytics application. The
-project currently provides its application foundation, a health-check endpoint,
-and Pydantic schemas for expense data.
+project provides a layered architecture with API routing, business logic,
+data access, and SQLite persistence.
 
-> **Project status:** Early development. Expense schemas are defined, but expense
-> CRUD, persistence, authentication, and analytics endpoints have not been
-> implemented yet.
+> **Project status:** Early development. The create-expense endpoint is
+> functional with full database persistence. Read, update, delete, analytics,
+> authentication, and error handling are not yet implemented.
 
 ## Technology stack
 
@@ -14,6 +14,7 @@ and Pydantic schemas for expense data.
 - FastAPI
 - Pydantic
 - Uvicorn
+- SQLite (via Python's built-in `sqlite3` module)
 - Pytest and FastAPI TestClient
 
 The repository uses a pinned `requirements.txt` so that local environments can
@@ -25,17 +26,59 @@ install the same dependency versions.
 expense-analytics-api/
 |-- app/
 |   |-- __init__.py
-|   |-- main.py                 # FastAPI application and routes
-|   `-- schemas/
+|   |-- main.py                     # FastAPI application entrypoint
+|   |-- api/
+|   |   |-- __init__.py
+|   |   `-- expenses.py             # Expense router (POST /expenses)
+|   |-- db/
+|   |   |-- __init__.py
+|   |   `-- database.py             # SQLite connection and table init
+|   |-- models/
+|   |   |-- __init__.py
+|   |   `-- expense.py              # Domain model (frozen dataclass)
+|   |-- repositories/
+|   |   |-- __init__.py
+|   |   `-- expense_repository.py   # SQLite data access layer
+|   |-- schemas/
+|   |   |-- __init__.py
+|   |   `-- expense.py              # Pydantic request/response models
+|   `-- services/
 |       |-- __init__.py
-|       `-- expense.py          # Expense request and response models
+|       `-- expense_service.py      # Business logic layer
 |-- tests/
 |   |-- __init__.py
-|   `-- test_health.py          # Health endpoint test
+|   `-- test_health.py              # Health endpoint test
 |-- .gitignore
+|-- expenses.db                     # SQLite database (auto-created, git-ignored)
 |-- requirements.txt
 `-- readme.md
 ```
+
+### Architecture layers
+
+Requests flow through four distinct layers:
+
+```text
+HTTP Request
+    |
+    v
+[API Layer]          app/api/              Routes, request parsing, response formatting
+    |
+    v
+[Service Layer]      app/services/         Business logic (validation, transformation)
+    |
+    v
+[Repository Layer]   app/repositories/     Data access, SQL queries
+    |
+    v
+[Database Layer]     app/db/               Connection management, schema DDL
+    |
+    v
+[SQLite]             expenses.db           File-based database
+```
+
+Domain models (`app/models/`) and Pydantic schemas (`app/schemas/`) are shared
+across layers but kept separate to isolate the API contract from domain logic.
 
 ## Getting started
 
@@ -83,7 +126,7 @@ FastAPI generates interactive documentation while the server is running:
 - ReDoc: `http://127.0.0.1:8000/redoc`
 - OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
 
-## Available endpoint
+## Available endpoints
 
 ### Health check
 
@@ -105,24 +148,26 @@ Successful response (`200 OK`):
 }
 ```
 
-## Expense schemas
+### Create expense
 
-The models in `app/schemas/expense.py` describe the intended shape of future
-expense endpoints. They are not connected to an API route yet.
+```http
+POST /expenses
+Content-Type: application/json
+```
 
-### `ExpenseCreate`
+Example request:
 
-| Field | Type | Validation |
-| --- | --- | --- |
-| `amount` | Decimal | Must be greater than `0` |
-| `category` | String | Between 1 and 50 characters |
-| `description` | String | Between 1 and 255 characters |
-| `expense_date` | Date | ISO 8601 date, such as `2026-09-04` |
+```bash
+curl -X POST http://127.0.0.1:8000/expenses \
+  -H "Content-Type: application/json" \
+  -d '{"amount": "249.99", "category": "Groceries", "description": "Weekly grocery shopping", "expense_date": "2026-09-04"}'
+```
 
-Example payload:
+Successful response (`201 Created`):
 
 ```json
 {
+  "id": 1,
   "amount": "249.99",
   "category": "Groceries",
   "description": "Weekly grocery shopping",
@@ -130,11 +175,31 @@ Example payload:
 }
 ```
 
+## Expense schemas
+
+The models in `app/schemas/expense.py` define request and response validation
+for expense endpoints.
+
+### `ExpenseCreate`
+
+| Field | Type | Validation |
+| --- | --- | --- |
+| `amount` | Decimal | Must be greater than `0`, max 12 digits, 2 decimal places |
+| `category` | String | Between 1 and 50 characters |
+| `description` | String | Between 1 and 255 characters |
+| `expense_date` | Date | ISO 8601 date, such as `2026-09-04` |
+
 ### `ExpenseResponse`
 
 The response schema contains all `ExpenseCreate` fields plus an integer `id`.
 Using `Decimal` for monetary values avoids the rounding behavior associated with
 binary floating-point numbers.
+
+### Domain model
+
+The `Expense` dataclass in `app/models/expense.py` is a frozen (immutable)
+domain object used internally. Amounts are stored in the database as integers
+(paise/cents) and converted to `Decimal` at the repository boundary.
 
 ## Running tests
 
@@ -155,20 +220,24 @@ the expected JSON response.
 
 ## Configuration and persistence
 
-The application currently requires no environment variables and has no database
-connection. `.env` files and local `*.db` files are ignored by Git in preparation
-for future configuration and persistence work.
+The application uses SQLite with the database file `expenses.db` at the project
+root. The table is created automatically on startup via `initialize_database()`.
+`.env` files and `*.db` files are ignored by Git.
+
+No environment variables are required. The database path is resolved relative to
+the project root in `app/db/database.py`.
 
 ## Current development roadmap
 
 Likely next steps for the API are:
 
-1. Add a database layer and migrations.
-2. Implement expense create, read, update, and delete endpoints.
-3. Add filtering and aggregation for expense analytics.
-4. Add consistent error handling and response schemas.
-5. Expand unit and integration test coverage.
-6. Add authentication and authorization if expenses are user-specific.
+1. Add `GET /expenses` (list all) and `GET /expenses/{id}` (get one) endpoints.
+2. Add `PUT /expenses/{id}` (update) and `DELETE /expenses/{id}` (delete) endpoints.
+3. Add filtering, sorting, and aggregation for expense analytics.
+4. Add consistent error handling and custom exception responses.
+5. Add CORS middleware and environment-based configuration.
+6. Expand unit and integration test coverage.
+7. Add authentication and authorization if expenses are user-specific.
 
 ## License
 
