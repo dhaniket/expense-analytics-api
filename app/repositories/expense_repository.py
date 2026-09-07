@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.db.database import get_connection
 from app.models.expense import Expense
 from app.schemas.expense import ExpenseCreate
+from typing import Literal
 
 
 class ExpenseRepository:
@@ -70,6 +71,16 @@ class ExpenseRepository:
         category: str | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        sort_by: Literal[
+            "expense_date",
+            "amount",
+        ] = "expense_date",
+        sort_order: Literal[
+            "asc",
+            "desc",
+        ] = "desc",
     ) -> list[Expense]:
 
         query = """
@@ -100,7 +111,22 @@ class ExpenseRepository:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " ORDER BY expense_date DESC, id DESC"
+        sort_columns = {
+            "expense_date": "expense_date",
+            "amount": "amount_paise",
+        }
+        sort_column = sort_columns[sort_by]
+        order = "ASC" if sort_order == "asc" else "DESC"
+
+        query += f" ORDER BY " f"{sort_column} {order}"
+        query += " LIMIT ? OFFSET ?"
+
+        parameters.extend(
+            [
+                limit,
+                offset,
+            ]
+        )
 
         with get_connection() as connection:
             rows = connection.execute(

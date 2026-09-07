@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.expenses import router as expenses_router
 from app.db.database import initialize_database
+from app.api.router import api_router
 
 
 @asynccontextmanager
@@ -20,9 +21,9 @@ app = FastAPI(
 )
 
 
-app.include_router(expenses_router)
+app.include_router(api_router)
 
 
-@app.get("/health")
+@app.get("/health", tags=["system"])
 def health_check():
     return {"status": "ok"}

@@ -7,7 +7,7 @@ def test_health_check(client):
 
 def test_create_expense(client):
     response = client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "450.50",
             "category": "Food",
@@ -31,7 +31,7 @@ def test_create_expense_rejects_negative_amount(
     client,
 ):
     response = client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "-100",
             "category": "Food",
@@ -47,7 +47,7 @@ def test_create_expense_rejects_blank_category(
     client,
 ):
     response = client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "100",
             "category": "   ",
@@ -61,7 +61,7 @@ def test_create_expense_rejects_blank_category(
 
 def test_get_expense(client):
     create_response = client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "250.00",
             "category": "Food",
@@ -72,17 +72,23 @@ def test_get_expense(client):
 
     expense_id = create_response.json()["id"]
 
-    response = client.get(f"/expenses/{expense_id}")
+    response = client.get(f"/api/v1/expenses/{expense_id}")
 
     assert response.status_code == 200
 
-    assert response.json()["category"] == "Food"
+    data = response.json()
+
+    assert data["id"] == expense_id
+    assert data["amount"] == "250"
+    assert data["category"] == "Food"
+    assert data["description"] == "Lunch"
+    assert data["expense_date"] == "2026-09-06"
 
 
 def test_get_missing_expense_returns_404(
     client,
 ):
-    response = client.get("/expenses/99999")
+    response = client.get("/api/v1/expenses/99999")
 
     assert response.status_code == 404
 
@@ -91,7 +97,7 @@ def test_get_missing_expense_returns_404(
 
 def test_list_expenses(client):
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "250.00",
             "category": "Food",
@@ -101,7 +107,7 @@ def test_list_expenses(client):
     )
 
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "800.00",
             "category": "Travel",
@@ -110,20 +116,20 @@ def test_list_expenses(client):
         },
     )
 
-    response = client.get("/expenses")
+    response = client.get("/api/v1/expenses")
 
     assert response.status_code == 200
 
     data = response.json()
 
-    assert len(data) == 2
+    assert len(data["items"]) == 2
 
 
 def test_filter_expenses_by_category(
     client,
 ):
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "200.00",
             "category": "Food",
@@ -133,7 +139,7 @@ def test_filter_expenses_by_category(
     )
 
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "1000.00",
             "category": "Travel",
@@ -142,21 +148,21 @@ def test_filter_expenses_by_category(
         },
     )
 
-    response = client.get("/expenses?category=Food")
+    response = client.get("/api/v1/expenses?category=Food")
 
     assert response.status_code == 200
 
     data = response.json()
 
-    assert len(data) == 1
-    assert data[0]["category"] == "Food"
+    assert len(data["items"]) == 1
+    assert data["items"][0]["category"] == "Food"
 
 
 def test_filter_expenses_by_date_range(
     client,
 ):
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "100.00",
             "category": "Food",
@@ -166,7 +172,7 @@ def test_filter_expenses_by_date_range(
     )
 
     client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "200.00",
             "category": "Food",
@@ -175,21 +181,25 @@ def test_filter_expenses_by_date_range(
         },
     )
 
-    response = client.get("/expenses" "?start_date=2026-09-04" "&end_date=2026-09-06")
+    response = client.get(
+        "/api/v1/expenses" "?start_date=2026-09-04" "&end_date=2026-09-06"
+    )
 
     assert response.status_code == 200
 
     data = response.json()
 
-    assert len(data) == 1
+    assert len(data["items"]) == 1
 
-    assert data[0]["expense_date"] == "2026-09-05"
+    assert data["items"][0]["expense_date"] == "2026-09-05"
 
 
 def test_invalid_date_range_returns_400(
     client,
 ):
-    response = client.get("/expenses" "?start_date=2026-09-10" "&end_date=2026-09-01")
+    response = client.get(
+        "/api/v1/expenses" "?start_date=2026-09-10" "&end_date=2026-09-01"
+    )
 
     assert response.status_code == 400
 
@@ -198,7 +208,7 @@ def test_invalid_date_range_returns_400(
 
 def test_delete_expense(client):
     create_response = client.post(
-        "/expenses",
+        "/api/v1/expenses",
         json={
             "amount": "600.00",
             "category": "Shopping",
@@ -209,11 +219,11 @@ def test_delete_expense(client):
 
     expense_id = create_response.json()["id"]
 
-    delete_response = client.delete(f"/expenses/{expense_id}")
+    delete_response = client.delete(f"/api/v1/expenses/{expense_id}")
 
     assert delete_response.status_code == 204
 
-    get_response = client.get(f"/expenses/{expense_id}")
+    get_response = client.get(f"/api/v1/expenses/{expense_id}")
 
     assert get_response.status_code == 404
 
@@ -221,6 +231,42 @@ def test_delete_expense(client):
 def test_delete_missing_expense_returns_404(
     client,
 ):
-    response = client.delete("/expenses/999999")
+    response = client.delete("/api/v1/expenses/999999")
 
     assert response.status_code == 404
+
+
+def test_expense_pagination(
+    client,
+):
+    for index in range(5):
+
+        client.post(
+            "/api/v1/expenses",
+            json={
+                "amount": str(100 + index),
+                "category": "Food",
+                "description": f"Expense {index}",
+                "expense_date": "2026-09-06",
+            },
+        )
+
+    response = client.get("/api/v1/expenses" "?limit=2" "&offset=0")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data["items"]) == 2
+
+    assert data["limit"] == 2
+
+    assert data["offset"] == 0
+
+
+def test_expense_limit_cannot_exceed_100(
+    client,
+):
+    response = client.get("/api/v1/expenses" "?limit=101")
+
+    assert response.status_code == 422

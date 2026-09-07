@@ -4,6 +4,8 @@ from app.models.expense import Expense
 from app.repositories.expense_repository import ExpenseRepository
 from app.schemas.expense import ExpenseCreate
 
+from typing import Literal
+
 
 class ExpenseService:
 
@@ -32,12 +34,26 @@ class ExpenseService:
         category: str | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        sort_by: Literal[
+            "expense_date",
+            "amount",
+        ] = "expense_date",
+        sort_order: Literal[
+            "asc",
+            "desc",
+        ] = "desc",
     ) -> list[Expense]:
 
         return self.repository.list(
             category=category,
             start_date=start_date,
             end_date=end_date,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
     def delete_expense(

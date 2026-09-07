@@ -1,5 +1,7 @@
 from datetime import date
 
+from typing import Annotated
+
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -7,6 +9,12 @@ from fastapi import (
     Query,
     Response,
     status,
+)
+from app.schemas.common import (
+    PaginatedResponse,
+)
+from app.schemas.expense_query import (
+    ExpenseQueryParams,
 )
 
 from app.repositories.expense_repository import (
@@ -65,31 +73,37 @@ def get_expense(
 
 @router.get(
     "",
-    response_model=list[ExpenseResponse],
+    response_model=PaginatedResponse[ExpenseResponse],
 )
 def list_expenses(
-    category: str | None = Query(
-        default=None,
-        min_length=1,
-        max_length=50,
-    ),
-    start_date: date | None = None,
-    end_date: date | None = None,
+    params: Annotated[ExpenseQueryParams, Query()],
 ) -> list[ExpenseResponse]:
 
-    if start_date is not None and end_date is not None and start_date > end_date:
+    if (
+        params.start_date is not None
+        and params.end_date is not None
+        and params.start_date > params.end_date
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=("start_date cannot be " "after end_date"),
         )
 
     expenses = service.list_expenses(
-        category=category,
-        start_date=start_date,
-        end_date=end_date,
+        category=params.category,
+        start_date=params.start_date,
+        end_date=params.end_date,
+        limit=params.limit,
+        offset=params.offset,
+        sort_by=params.sort_by,
+        sort_order=params.sort_order,
     )
 
-    return [ExpenseResponse.model_validate(expense) for expense in expenses]
+    return PaginatedResponse[ExpenseResponse](
+        items=[ExpenseResponse.model_validate(expense) for expense in expenses],
+        limit=params.limit,
+        offset=params.offset,
+    )
 
 
 @router.delete(
