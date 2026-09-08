@@ -5,6 +5,9 @@ from fastapi import FastAPI
 from app.api.expenses import router as expenses_router
 from app.db.database import initialize_database
 from app.api.router import api_router
+from app.errors.handlers import (
+    register_exception_handlers,
+)
 
 
 @asynccontextmanager
@@ -19,7 +22,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
+register_exception_handlers(app)
 
 app.include_router(api_router)
 

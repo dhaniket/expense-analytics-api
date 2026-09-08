@@ -4,7 +4,6 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
-    HTTPException,
     Path,
     Query,
     Response,
@@ -17,15 +16,13 @@ from app.schemas.expense_query import (
     ExpenseQueryParams,
 )
 
-from app.repositories.expense_repository import (
-    ExpenseRepository,
-)
 from app.schemas.expense import (
     ExpenseCreate,
     ExpenseResponse,
 )
-from app.services.expense_service import (
-    ExpenseService,
+
+from app.api.dependencies import (
+    ExpenseServiceDep,
 )
 
 router = APIRouter(
@@ -34,17 +31,13 @@ router = APIRouter(
 )
 
 
-repository = ExpenseRepository()
-service = ExpenseService(repository)
-
-
 @router.post(
     "",
     response_model=ExpenseResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def create_expense(
-    expense_data: ExpenseCreate,
+    expense_data: ExpenseCreate, service: ExpenseServiceDep
 ) -> ExpenseResponse:
 
     expense = service.create_expense(expense_data)
@@ -57,16 +50,10 @@ def create_expense(
     response_model=ExpenseResponse,
 )
 def get_expense(
-    expense_id: int = Path(gt=0),
+    expense_id: Annotated[int, Path(gt=0)], service: ExpenseServiceDep
 ) -> ExpenseResponse:
 
     expense = service.get_expense(expense_id)
-
-    if expense is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Expense not found",
-        )
 
     return ExpenseResponse.model_validate(expense)
 
@@ -76,18 +63,8 @@ def get_expense(
     response_model=PaginatedResponse[ExpenseResponse],
 )
 def list_expenses(
-    params: Annotated[ExpenseQueryParams, Query()],
-) -> list[ExpenseResponse]:
-
-    if (
-        params.start_date is not None
-        and params.end_date is not None
-        and params.start_date > params.end_date
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=("start_date cannot be " "after end_date"),
-        )
+    params: Annotated[ExpenseQueryParams, Query()], service: ExpenseServiceDep
+) -> PaginatedResponse[ExpenseResponse]:
 
     expenses = service.list_expenses(
         category=params.category,
@@ -111,15 +88,9 @@ def list_expenses(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_expense(
-    expense_id: int = Path(gt=0),
+    expense_id: Annotated[int, Path(gt=0)], service: ExpenseServiceDep
 ) -> Response:
 
-    deleted = service.delete_expense(expense_id)
-
-    if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Expense not found",
-        )
+    service.delete_expense(expense_id)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

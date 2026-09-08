@@ -1,10 +1,17 @@
 from datetime import date
 
+from fastapi import HTTPException, params
+
 from app.models.expense import Expense
 from app.repositories.expense_repository import ExpenseRepository
 from app.schemas.expense import ExpenseCreate
 
 from typing import Literal
+
+from app.errors.expense_errors import (
+    ExpenseNotFoundError,
+    InvalidExpenseDateRangeError,
+)
 
 
 class ExpenseService:
@@ -27,7 +34,11 @@ class ExpenseService:
         expense_id: int,
     ) -> Expense | None:
 
-        return self.repository.get_by_id(expense_id)
+        expense = self.repository.get_by_id(expense_id)
+        if not expense:
+            raise ExpenseNotFoundError(expense_id=expense_id)
+
+        return expense
 
     def list_expenses(
         self,
@@ -46,6 +57,15 @@ class ExpenseService:
         ] = "desc",
     ) -> list[Expense]:
 
+        if (
+            start_date is not None
+            and end_date is not None
+            and start_date > end_date
+        ):
+            raise InvalidExpenseDateRangeError(
+                start_date=start_date, end_date=end_date
+            )
+
         return self.repository.list(
             category=category,
             start_date=start_date,
@@ -59,6 +79,9 @@ class ExpenseService:
     def delete_expense(
         self,
         expense_id: int,
-    ) -> bool:
+    ) -> None:
 
-        return self.repository.delete(expense_id)
+        deleted = self.repository.delete(expense_id)
+
+        if not deleted:
+            raise ExpenseNotFoundError(expense_id)
