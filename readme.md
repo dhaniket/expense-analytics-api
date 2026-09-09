@@ -1,143 +1,698 @@
 # Expense Analytics API
 
-A FastAPI-based backend for an expense tracking and analytics application. The
-project provides a layered architecture with API routing, business logic,
-data access, and SQLite persistence.
+A production-style backend API built with **Python, FastAPI, Pydantic, SQLite, Uvicorn, and pytest**.
 
-## Technology stack
+The project demonstrates clean backend architecture, REST API design, dependency injection, validation, persistence, structured error handling, partial updates, pagination, filtering, sorting, OpenAPI documentation, and automated testing.
 
-- Python 3.10 or newer (verified with Python 3.13.5)
+The focus is not only on making endpoints work, but on structuring the backend so it is easier to test, maintain, and evolve.
+
+---
+
+## Features
+
+- Create expenses
+- Fetch an expense by ID
+- List expenses
+- Partially update expenses with `PATCH`
+- Delete expenses
+- Filter by category
+- Filter by date range
+- Sort by supported fields
+- Sort ascending or descending
+- Limit/offset pagination
+- API versioning with `/api/v1`
+- Strict request validation
+- Structured domain error responses
+- Dependency injection with FastAPI `Depends`
+- SQLite persistence
+- Decimal-based money handling
+- Integer paise storage internally
+- Automatic OpenAPI / Swagger documentation
+- API integration tests
+- Service-layer unit tests
+- Regression tests for previously discovered bugs
+
+---
+
+## Tech Stack
+
+- Python 3.13+
 - FastAPI
 - Pydantic
+- SQLite
 - Uvicorn
-- SQLite (via Python's built-in `sqlite3` module)
-- Pytest and FastAPI TestClient
+- pytest
+- Starlette TestClient
+- Git
 
-The repository uses a pinned `requirements.txt` so that local environments can
-install the same dependency versions.
+---
 
-## Project structure
+## API Endpoints
+
+| Method | Endpoint | Description | Success |
+|---|---|---|---:|
+| `GET` | `/health` | Health check | `200` |
+| `POST` | `/api/v1/expenses` | Create an expense | `201` |
+| `GET` | `/api/v1/expenses` | List/filter/sort/paginate expenses | `200` |
+| `GET` | `/api/v1/expenses/{expense_id}` | Fetch one expense | `200` |
+| `PATCH` | `/api/v1/expenses/{expense_id}` | Partially update an expense | `200` |
+| `DELETE` | `/api/v1/expenses/{expense_id}` | Delete an expense | `204` |
+
+---
+
+## Architecture
+
+```text
+External HTTP Request
+        │
+        ▼
+Pydantic Validation
+        │
+        ▼
+FastAPI Router
+        │
+        ▼
+Injected ExpenseService
+        │
+        ▼
+Business Rules
+        │
+        ▼
+ExpenseRepository
+        │
+        ▼
+SQLite
+```
+
+Error flow:
+
+```text
+Domain Failure
+      │
+      ▼
+Domain Exception
+      │
+      ▼
+Global Exception Handler
+      │
+      ▼
+Structured HTTP Error
+```
+
+Testing:
+
+```text
+API Tests
+→ HTTP + FastAPI + Service + Repository + SQLite
+
+Service Tests
+→ Service + Fake Repository
+```
+
+---
+
+## Layer Responsibilities
+
+### Router Layer
+
+Responsible for HTTP concerns:
+
+- route definitions
+- request parsing
+- query parameters
+- path parameters
+- response models
+- HTTP status codes
+- dependency injection
+
+The router does not contain SQL or core business rules.
+
+### Service Layer
+
+Responsible for application and business rules:
+
+- create expense
+- get expense
+- list expenses
+- validate date ranges
+- partial-update behavior
+- delete behavior
+- interpret repository results
+- raise domain exceptions when required
+
+Example:
+
+```text
+Repository returns None
+        ↓
+Service interprets it
+        ↓
+ExpenseNotFoundError
+```
+
+### Repository Layer
+
+Responsible for persistence:
+
+- SQL queries
+- inserts
+- selects
+- updates
+- deletes
+- filtering
+- sorting
+- pagination
+- converting database rows into domain objects
+
+The repository does not know about HTTP status codes.
+
+---
+
+## Dependency Injection
+
+FastAPI dependencies are used to construct and inject the repository and service.
+
+Conceptually:
+
+```text
+FastAPI
+   │
+   ▼
+get_expense_repository()
+   │
+   ▼
+ExpenseRepository
+   │
+   ▼
+get_expense_service(repository)
+   │
+   ▼
+ExpenseService
+   │
+   ▼
+Endpoint
+```
+
+Example:
+
+```python
+ExpenseServiceDep = Annotated[
+    ExpenseService,
+    Depends(get_expense_service),
+]
+```
+
+This reduces coupling and makes dependencies easier to replace during tests.
+
+---
+
+## Domain Errors
+
+The service layer raises application-specific exceptions instead of FastAPI `HTTPException`.
+
+Examples:
+
+```python
+ExpenseNotFoundError
+InvalidExpenseDateRangeError
+```
+
+Global exception handlers translate these domain failures into HTTP responses.
+
+### Missing expense
+
+```json
+{
+  "error": {
+    "code": "EXPENSE_NOT_FOUND",
+    "message": "Expense 99999 not found"
+  }
+}
+```
+
+### Invalid date range
+
+```json
+{
+  "error": {
+    "code": "INVALID_DATE_RANGE",
+    "message": "start_date cannot be after end_date"
+  }
+}
+```
+
+This gives API consumers a predictable error contract.
+
+---
+
+## Validation vs Business Rules
+
+The project distinguishes schema validation from business-level validation.
+
+### Request validation
+
+Examples:
+
+```text
+limit=1000
+```
+
+or:
+
+```json
+{
+  "amount": "-1.00"
+}
+```
+
+These are rejected by FastAPI/Pydantic with:
+
+```text
+422 Unprocessable Entity
+```
+
+### Business validation
+
+Example:
+
+```text
+start_date=2026-09-10
+end_date=2026-09-01
+```
+
+Both values are individually valid dates, but the combination is invalid.
+
+The service raises:
+
+```python
+InvalidExpenseDateRangeError
+```
+
+and the API returns:
+
+```text
+400 Bad Request
+```
+
+---
+
+## Query Parameters
+
+`GET /api/v1/expenses` supports:
+
+```text
+category
+start_date
+end_date
+limit
+offset
+sort_by
+sort_order
+```
+
+Example:
+
+```text
+GET /api/v1/expenses?category=Food&limit=10&offset=0&sort_by=amount&sort_order=desc
+```
+
+Unknown query parameters are rejected using:
+
+```python
+ConfigDict(
+    extra="forbid"
+)
+```
+
+This prevents typos such as:
+
+```text
+?limmit=10
+```
+
+from being silently ignored.
+
+---
+
+## Pagination
+
+The API uses limit/offset pagination.
+
+Example:
+
+```text
+GET /api/v1/expenses?limit=20&offset=0
+```
+
+Response:
+
+```json
+{
+  "items": [],
+  "limit": 20,
+  "offset": 0
+}
+```
+
+A reusable generic response model is used:
+
+```python
+PaginatedResponse[ExpenseResponse]
+```
+
+The API also limits the maximum allowed page size to avoid unbounded requests.
+
+---
+
+## Sorting
+
+Supported sort fields are explicitly whitelisted:
+
+```text
+id
+expense_date
+amount
+```
+
+Supported sort orders:
+
+```text
+asc
+desc
+```
+
+Repository whitelist:
+
+```python
+sort_columns = {
+    "id": "id",
+    "expense_date": "expense_date",
+    "amount": "amount_paise",
+}
+```
+
+This prevents arbitrary client-controlled SQL identifiers from being inserted into queries.
+
+---
+
+## SQL Safety
+
+Dynamic values are passed as SQL parameters:
+
+```sql
+WHERE category = ?
+LIMIT ?
+OFFSET ?
+```
+
+Sortable column names are selected only from the application-controlled whitelist.
+
+---
+
+## Partial Updates with PATCH
+
+The API supports:
+
+```http
+PATCH /api/v1/expenses/{expense_id}
+```
+
+Example:
+
+```json
+{
+  "amount": "300.00"
+}
+```
+
+Only the supplied field changes.
+
+Other fields remain unchanged.
+
+The implementation uses:
+
+```python
+update_data.model_dump(
+    exclude_unset=True
+)
+```
+
+to distinguish between fields that were omitted and fields that were explicitly supplied.
+
+---
+
+## PATCH Semantics
+
+For this API:
+
+```text
+Field omitted
+→ keep existing value
+
+Field supplied
+→ validate and update
+```
+
+Required domain fields cannot be explicitly changed to `null`.
+
+The API also rejects an empty PATCH body:
+
+```json
+{}
+```
+
+because a partial update must request at least one actual change.
+
+The service uses:
+
+```python
+dataclasses.replace(...)
+```
+
+to create an updated domain object while preserving fields that were not changed.
+
+---
+
+## PUT vs PATCH
+
+This API intentionally implements `PATCH`, not `PUT`.
+
+### PATCH
+
+Used for partial modification:
+
+```json
+{
+  "category": "Travel"
+}
+```
+
+Only the category changes.
+
+### PUT
+
+Normally represents full-resource replacement semantics.
+
+Since this API requires partial field modification, `PATCH` is the appropriate choice.
+
+---
+
+## HTTP Semantics
+
+The API uses:
+
+```text
+200 OK
+→ successful GET / PATCH
+
+201 Created
+→ successful POST
+
+204 No Content
+→ successful DELETE
+
+400 Bad Request
+→ invalid business-level request relationship
+
+404 Not Found
+→ resource does not exist
+
+422 Unprocessable Entity
+→ request validation failure
+```
+
+The project also covers REST concepts such as safe methods and idempotency.
+
+---
+
+## Money Handling
+
+Money is represented using Python `Decimal` rather than floating-point numbers.
+
+SQLite stores amounts internally as integer paise:
+
+```text
+₹250.00
+→ 25000
+```
+
+Database reads normalize amounts back to two decimal places:
+
+```text
+30000
+→ Decimal("300.00")
+```
+
+This avoids floating-point precision issues and keeps monetary output consistent.
+
+---
+
+## Example Create Request
+
+```http
+POST /api/v1/expenses
+```
+
+```json
+{
+  "amount": "450.00",
+  "category": "Food",
+  "description": "Dinner",
+  "expense_date": "2026-09-10"
+}
+```
+
+Example response:
+
+```json
+{
+  "id": 1,
+  "amount": "450.00",
+  "category": "Food",
+  "description": "Dinner",
+  "expense_date": "2026-09-10"
+}
+```
+
+---
+
+## Example PATCH Request
+
+```http
+PATCH /api/v1/expenses/1
+```
+
+```json
+{
+  "amount": "500.00"
+}
+```
+
+Example response:
+
+```json
+{
+  "id": 1,
+  "amount": "500.00",
+  "category": "Food",
+  "description": "Dinner",
+  "expense_date": "2026-09-10"
+}
+```
+
+---
+
+## Project Structure
 
 ```text
 expense-analytics-api/
-|-- app/
-|   |-- __init__.py
-|   |-- main.py                     # FastAPI application entrypoint
-|   |-- api/
-|   |   |-- __init__.py
-|   |   `-- expenses.py             # Expense router (CRUD + list endpoints)
-|   |-- db/
-|   |   |-- __init__.py
-|   |   `-- database.py             # SQLite connection and table init
-|   |-- models/
-|   |   |-- __init__.py
-|   |   `-- expense.py              # Domain model (frozen dataclass)
-|   |-- repositories/
-|   |   |-- __init__.py
-|   |   `-- expense_repository.py   # SQLite data access layer
-|   |-- schemas/
-|   |   |-- __init__.py
-|   |   `-- expense.py              # Pydantic request/response models
-|   `-- services/
-|       |-- __init__.py
-|       `-- expense_service.py      # Business logic layer
-|-- tests/
-|   |-- __init__.py
-|   |-- conftest.py                 # Shared fixtures (test client, temp DB)
-|   `-- test_expenses.py            # Full test suite
-|-- .gitignore
-|-- expenses.db                     # SQLite database (auto-created, git-ignored)
-|-- requirements.txt
-`-- readme.md
+├── app/
+│   ├── api/
+│   │   ├── dependencies.py
+│   │   ├── expenses.py
+│   │   └── router.py
+│   │
+│   ├── db/
+│   │   └── database.py
+│   │
+│   ├── errors/
+│   │   ├── __init__.py
+│   │   ├── expense_errors.py
+│   │   └── handlers.py
+│   │
+│   ├── models/
+│   │   └── expense.py
+│   │
+│   ├── repositories/
+│   │   └── expense_repository.py
+│   │
+│   ├── schemas/
+│   │   ├── common.py
+│   │   ├── error.py
+│   │   ├── expense.py
+│   │   └── expense_query.py
+│   │
+│   ├── services/
+│   │   └── expense_service.py
+│   │
+│   └── main.py
+│
+├── tests/
+│   ├── conftest.py
+│   ├── test_expenses.py
+│   └── test_expense_service.py
+│
+├── .gitignore
+├── README.md
+├── requirements.txt
+└── ...
 ```
 
-### Architecture layers
+Exact filenames may vary slightly depending on local organization.
 
-Requests flow through four distinct layers:
+---
 
-```text
-HTTP Request
-    |
-    v
-[API Layer]          app/api/              Routes, request parsing, response formatting
-    |
-    v
-[Service Layer]      app/services/         Business logic (validation, transformation)
-    |
-    v
-[Repository Layer]   app/repositories/     Data access, SQL queries
-    |
-    v
-[Database Layer]     app/db/               Connection management, schema DDL
-    |
-    v
-[SQLite]             expenses.db           File-based database
-```
+## Running the Application
 
-Domain models (`app/models/`) and Pydantic schemas (`app/schemas/`) are shared
-across layers but kept separate to isolate the API contract from domain logic.
-
-## Getting started
-
-### 1. Create a virtual environment
-
-On Windows PowerShell:
+Activate the virtual environment:
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1
 ```
 
-On macOS or Linux:
+Start the API:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-If PowerShell blocks the activation script, either use Command Prompt with
-`.venv\Scripts\activate.bat` or review your PowerShell execution policy.
-
-### 2. Install dependencies
-
-```bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-### 3. Start the API
-
-Run this command from the repository root:
-
-```bash
+```powershell
 python -m uvicorn app.main:app --reload
 ```
 
-The application will be available at `http://127.0.0.1:8000`.
+Application:
 
-## API documentation
+```text
+http://127.0.0.1:8000
+```
 
-FastAPI generates interactive documentation while the server is running:
+Swagger UI:
 
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- ReDoc: `http://127.0.0.1:8000/redoc`
-- OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
+```text
+http://127.0.0.1:8000/docs
+```
 
-## Available endpoints
+OpenAPI schema:
 
-### Health check
+```text
+http://127.0.0.1:8000/openapi.json
+```
+
+---
+
+## Health Check
 
 ```http
 GET /health
 ```
 
-Example request:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-Successful response (`200 OK`):
+Expected:
 
 ```json
 {
@@ -145,190 +700,356 @@ Successful response (`200 OK`):
 }
 ```
 
-### Create expense
+---
 
-```http
-POST /expenses
-Content-Type: application/json
+## Running Tests
+
+Run the complete test suite:
+
+```powershell
+pytest -v
 ```
 
-Example request:
+or:
 
-```bash
-curl -X POST http://127.0.0.1:8000/expenses \
-  -H "Content-Type: application/json" \
-  -d '{"amount": "249.99", "category": "Groceries", "description": "Weekly grocery shopping", "expense_date": "2026-09-06"}'
+```powershell
+pytest -q
 ```
 
-Successful response (`201 Created`):
+---
 
-```json
-{
-  "id": 1,
-  "amount": "249.99",
-  "category": "Groceries",
-  "description": "Weekly grocery shopping",
-  "expense_date": "2026-09-06"
-}
+## Testing Strategy
+
+### API / Integration Tests
+
+These exercise:
+
+```text
+TestClient
+   ↓
+FastAPI
+   ↓
+Service
+   ↓
+Repository
+   ↓
+Temporary SQLite database
 ```
 
-### Get expense by ID
+They cover:
 
-```http
-GET /expenses/{expense_id}
+- create
+- get
+- list
+- filters
+- sorting
+- pagination
+- PATCH
+- delete
+- validation errors
+- structured errors
+- OpenAPI contract
+
+### Service Unit Tests
+
+These test:
+
+```text
+ExpenseService
+      ↓
+FakeExpenseRepository
 ```
 
-Example request:
+without HTTP or SQLite.
 
-```bash
-curl http://127.0.0.1:8000/expenses/1
+They verify business rules such as:
+
+- missing expense behavior
+- invalid date ranges
+- partial-update field preservation
+- delete-missing behavior
+
+---
+
+## Dependency Overrides
+
+FastAPI dependency overrides can replace real dependencies during tests.
+
+Conceptually:
+
+```text
+Real ExpenseService
+        ↓ replaced with
+Stub / Fake ExpenseService
 ```
 
-Successful response (`200 OK`):
+This allows HTTP behavior to be tested independently from the real persistence layer.
 
-```json
-{
-  "id": 1,
-  "amount": "249.99",
-  "category": "Groceries",
-  "description": "Weekly grocery shopping",
-  "expense_date": "2026-09-06"
-}
+---
+
+## Test Isolation
+
+Tests use a temporary database rather than the development database.
+
+The test setup uses:
+
+```text
+pytest fixtures
+tmp_path
+monkeypatch
+TestClient
 ```
 
-Returns `404 Not Found` if the expense does not exist.
+This prevents automated tests from changing real application data.
 
-### List expenses
+---
 
-```http
-GET /expenses
-GET /expenses?category=Food
-GET /expenses?start_date=2026-09-01&end_date=2026-09-30
-GET /expenses?category=Food&start_date=2026-09-01&end_date=2026-09-30
+## Contract and Edge-Case Tests
+
+The suite covers cases such as:
+
+- invalid expense IDs
+- invalid sort order
+- unsupported sort fields
+- unknown query parameters
+- unknown PATCH fields
+- empty PATCH bodies
+- null values for required fields
+- DELETE returning an empty `204` body
+- pagination offsets
+- structured `404` responses
+- invalid date ranges
+- generated OpenAPI routes
+
+---
+
+## Regression Testing
+
+A regression test protects money formatting after a bug was found where:
+
+```text
+300.00
 ```
 
-Supports optional query parameters for filtering:
+could be returned as:
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `category` | String | Filter by exact category match (1-50 chars) |
-| `start_date` | Date | Filter expenses on or after this date |
-| `end_date` | Date | Filter expenses on or before this date |
-
-Example request:
-
-```bash
-curl "http://127.0.0.1:8000/expenses?category=Food&start_date=2026-09-01&end_date=2026-09-30"
+```text
+300
 ```
 
-Successful response (`200 OK`):
+after a database round trip.
 
-```json
-[
-  {
-    "id": 1,
-    "amount": "249.99",
-    "category": "Food",
-    "description": "Weekly grocery shopping",
-    "expense_date": "2026-09-06"
-  }
-]
+The conversion was fixed and the behavior is now locked by automated tests.
+
+The general workflow is:
+
+```text
+Bug discovered
+      ↓
+Root cause identified
+      ↓
+Fix applied
+      ↓
+Regression test added
 ```
 
-Returns `400 Bad Request` if `start_date` is after `end_date`.
+---
 
-Expenses are sorted by date descending (most recent first).
+## OpenAPI and Swagger
 
-### Delete expense
+FastAPI automatically generates OpenAPI documentation from:
 
-```http
-DELETE /expenses/{expense_id}
+- route definitions
+- request schemas
+- query models
+- response models
+- documented error responses
+
+Relevant `400` and `404` responses use the shared `ErrorResponse` model.
+
+Tests also verify that the expense paths and PATCH operation are present in:
+
+```text
+/openapi.json
 ```
 
-Example request:
+---
 
-```bash
-curl -X DELETE http://127.0.0.1:8000/expenses/1
+## Key Engineering Concepts Demonstrated
+
+### Python
+
+- type hints
+- dataclasses
+- `Decimal`
+- `date`
+- context managers
+- custom exceptions
+- `Literal`
+- `Annotated`
+- `TypeVar`
+- generics
+- duck typing
+- `dataclasses.replace`
+
+### FastAPI
+
+- `FastAPI`
+- `APIRouter`
+- router composition
+- API versioning
+- `Depends`
+- dependency injection
+- `Annotated`
+- `Query`
+- `Path`
+- request models
+- response models
+- lifespan
+- custom exception handlers
+- dependency overrides
+- OpenAPI
+- Swagger
+- response documentation
+
+### Pydantic
+
+- request schemas
+- response schemas
+- query parameter models
+- `Field`
+- `ConfigDict`
+- `extra="forbid"`
+- validation constraints
+- model validators
+- `model_dump(exclude_unset=True)`
+
+### REST / API Design
+
+- resource-oriented URLs
+- API versioning
+- pagination
+- filtering
+- sorting
+- `GET`
+- `POST`
+- `PATCH`
+- `DELETE`
+- `PUT` vs `PATCH`
+- safe methods
+- idempotency
+- status-code semantics
+- structured error contracts
+
+### Backend Architecture
+
+```text
+Router
+→ HTTP concerns
+
+Service
+→ business rules
+
+Repository
+→ persistence
+
+Database
+→ storage
 ```
 
-Successful response (`204 No Content`): empty body.
+Also demonstrated:
 
-Returns `404 Not Found` if the expense does not exist.
+- dependency injection
+- separation of concerns
+- domain exceptions
+- centralized error translation
+- fake repositories
+- dependency substitution
+- regression protection
 
-## Expense schemas
+---
 
-The models in `app/schemas/expense.py` define request and response validation
-for expense endpoints.
+## Why Use Multiple Layers?
 
-### `ExpenseCreate`
+A small application could put SQL directly inside FastAPI route functions.
 
-| Field | Type | Validation |
-| --- | --- | --- |
-| `amount` | Decimal | Must be greater than `0`, max 12 digits, 2 decimal places |
-| `category` | String | Between 1 and 50 characters |
-| `description` | String | Between 1 and 255 characters |
-| `expense_date` | Date | ISO 8601 date, such as `2026-09-06` |
+This project intentionally separates:
 
-Text fields are stripped of leading/trailing whitespace and rejected if empty.
-
-### `ExpenseResponse`
-
-The response schema contains all `ExpenseCreate` fields plus an integer `id`.
-Using `Decimal` for monetary values avoids the rounding behavior associated with
-binary floating-point numbers.
-
-### Domain model
-
-The `Expense` dataclass in `app/models/expense.py` is a frozen (immutable)
-domain object used internally. Amounts are stored in the database as integers
-(paise/cents) and converted to `Decimal` at the repository boundary.
-
-## Running tests
-
-From the repository root, with the virtual environment activated:
-
-```bash
-python -m pytest
+```text
+Router
+→ Service
+→ Repository
 ```
 
-For compact output:
+because it improves:
 
-```bash
-python -m pytest -q
-```
+- separation of concerns
+- testability
+- business-logic reuse
+- database replaceability
+- maintainability
+- framework independence
 
-### Test coverage
+---
 
-The test suite covers all endpoints and edge cases:
+## Current Limitations
 
-| Test | Description |
-| --- | --- |
-| `test_health_check` | Health endpoint returns `200` with `{"status": "ok"}` |
-| `test_create_expense` | Creating an expense returns `201` with correct data |
-| `test_create_expense_rejects_negative_amount` | Negative amounts are rejected with `422` |
-| `test_create_expense_rejects_blank_category` | Whitespace-only categories are rejected with `422` |
-| `test_get_expense` | Fetching an existing expense returns `200` |
-| `test_get_missing_expense_returns_404` | Fetching a nonexistent ID returns `404` |
-| `test_list_expenses` | Listing all expenses returns all records |
-| `test_filter_expenses_by_category` | Category filtering returns only matching expenses |
-| `test_filter_expenses_by_date_range` | Date range filtering returns only expenses within range |
-| `test_invalid_date_range_returns_400` | `start_date > end_date` returns `400` |
-| `test_delete_expense` | Deleting returns `204`, subsequent GET returns `404` |
-| `test_delete_missing_expense_returns_404` | Deleting a nonexistent ID returns `404` |
+The project intentionally does not yet include:
 
-Tests use an isolated temporary database per test via `conftest.py` fixtures to
-avoid any side effects between tests.
+- PostgreSQL
+- database migrations
+- authentication
+- authorization
+- Redis
+- caching
+- Kafka
+- RabbitMQ
+- Docker
+- Kubernetes
+- distributed processing
+- production monitoring
+- cursor pagination
+- total-count pagination metadata
 
-## Configuration and persistence
+---
 
-The application uses SQLite with the database file `expenses.db` at the project
-root. The table is created automatically on startup via `initialize_database()`.
-`.env` files and `*.db` files are ignored by Git.
+## Possible Future Improvements
 
-No environment variables are required. The database path is resolved relative to
-the project root in `app/db/database.py`.
+Potential next improvements include:
 
-## License
+- migrate persistence to PostgreSQL
+- add schema migrations
+- add indexes for common filters and sorting
+- return pagination totals
+- introduce authentication and authorization
+- add structured logging
+- add production monitoring and observability
+- containerize the application
+- add CI/CD
+- add caching where justified
 
-No license file is currently included. Add one before distributing or accepting
-external contributions to clarify permitted use.
+---
+
+## What This Project Demonstrates
+
+This project demonstrates more than basic FastAPI syntax.
+
+It shows how to build a backend with:
+
+- explicit API contracts
+- strict input validation
+- separated application layers
+- dependency injection
+- reusable business logic
+- isolated persistence logic
+- consistent domain error handling
+- correct REST semantics
+- partial-update behavior
+- SQL safety
+- automated integration tests
+- service-level unit tests
+- fake dependencies
+- regression protection
+- generated API documentation
+
+It provides a solid foundation for evolving the service into a larger production backend.
