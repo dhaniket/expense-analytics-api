@@ -10,7 +10,9 @@ from typing import Literal
 class ExpenseRepository:
 
     def create(self, expense_data: ExpenseCreate) -> Expense:
-        amount_paise = int(expense_data.amount * Decimal("100"))
+        amount_paise = int(
+            expense_data.amount * (Decimal("100").quantize(Decimal("0.01")))
+        )
 
         with get_connection() as connection:
             cursor = connection.execute(
@@ -74,6 +76,7 @@ class ExpenseRepository:
         limit: int = 20,
         offset: int = 0,
         sort_by: Literal[
+            "id",
             "expense_date",
             "amount",
         ] = "expense_date",
@@ -112,6 +115,7 @@ class ExpenseRepository:
             query += " WHERE " + " AND ".join(conditions)
 
         sort_columns = {
+            "id": "id",
             "expense_date": "expense_date",
             "amount": "amount_paise",
         }
@@ -156,7 +160,9 @@ class ExpenseRepository:
 
     @staticmethod
     def _row_to_expense(row) -> Expense:
-        amount = Decimal(row["amount_paise"]) / Decimal("100")
+        amount = (Decimal(row["amount_paise"]) / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
 
         return Expense(
             id=row["id"],
@@ -165,3 +171,36 @@ class ExpenseRepository:
             description=row["description"],
             expense_date=date.fromisoformat(row["expense_date"]),
         )
+
+    def update(
+        self,
+        expense: Expense,
+    ) -> Expense | None:
+
+        amount_paise = int(expense.amount * 100)
+
+        with get_connection() as connection:
+
+            cursor = connection.execute(
+                """
+                UPDATE expenses
+                SET
+                    amount_paise = ?,
+                    category = ?,
+                    description = ?,
+                    expense_date = ?
+                WHERE id = ?
+                """,
+                (
+                    amount_paise,
+                    expense.category,
+                    expense.description,
+                    expense.expense_date.isoformat(),
+                    expense.id,
+                ),
+            )
+
+            if cursor.rowcount == 0:
+                return None
+
+        return expense

@@ -32,6 +32,6 @@ class ExpenseQueryParams(BaseModel):
         ge=0,
     )
 
-    sort_by: Literal["expense_date", "amount"] = "expense_date"
+    sort_by: Literal["id", "expense_date", "amount"] = "expense_date"
 
     sort_order: Literal["asc", "desc"] = "desc"

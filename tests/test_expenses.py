@@ -17,7 +17,7 @@ class StubExpenseService:
 
         return Expense(
             id=expense_id,
-            amount=Decimal("99.99"),
+            amount=Decimal("99.99").quantize(Decimal("0.01")),
             category="Test",
             description="Injected expense",
             expense_date=date(
@@ -109,7 +109,7 @@ def test_get_expense(client):
     data = response.json()
 
     assert data["id"] == expense_id
-    assert data["amount"] == "250"
+    assert data["amount"] == "250.00"
     assert data["category"] == "Food"
     assert data["description"] == "Lunch"
     assert data["expense_date"] == "2026-09-06"
@@ -341,3 +341,158 @@ def test_service_dependency_can_be_overridden(
             get_expense_service,
             None,
         )
+
+
+def test_update_expense(
+    client,
+):
+    create_response = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "250.00",
+            "category": "Food",
+            "description": "Lunch",
+            "expense_date": "2026-09-08",
+        },
+    )
+
+    expense_id = create_response.json()["id"]
+
+    response = client.patch(
+        (f"/api/v1/expenses/" f"{expense_id}"),
+        json={"amount": "300.00"},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["amount"] == "300.00"
+
+    assert data["category"] == "Food"
+
+    assert data["description"] == "Lunch"
+
+    assert data["expense_date"] == "2026-09-08"
+
+    get_response = client.get(f"/api/v1/expenses/{expense_id}")
+
+    assert get_response.status_code == 200
+
+    saved = get_response.json()
+
+    assert saved["amount"] == "300.00"
+
+    assert saved["category"] == "Food"
+
+
+def test_update_expense_rejects_null_description(
+    client,
+):
+    create_response = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "500.00",
+            "category": "Food",
+            "description": "Dinner",
+            "expense_date": "2026-09-08",
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    expense_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/expenses/{expense_id}",
+        json={"description": None},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_expense_rejects_negative_amount(
+    client,
+):
+    create_response = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "500.00",
+            "category": "Food",
+            "description": "Test expense",
+            "expense_date": "2026-09-08",
+        },
+    )
+
+    expense_id = create_response.json()["id"]
+
+    response = client.patch(
+        (f"/api/v1/expenses/" f"{expense_id}"),
+        json={"amount": "-1"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_expense_rejects_empty_body(
+    client,
+):
+    create_response = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "500.00",
+            "category": "Food",
+            "description": "Test expense",
+            "expense_date": "2026-09-08",
+        },
+    )
+
+    expense_id = create_response.json()["id"]
+
+    response = client.patch(
+        (f"/api/v1/expenses/" f"{expense_id}"),
+        json={},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_missing_expense_returns_404(
+    client,
+):
+    response = client.patch(
+        "/api/v1/expenses/99999",
+        json={"amount": "500.00"},
+    )
+
+    assert response.status_code == 404
+
+    assert response.json() == {
+        "error": {
+            "code": "EXPENSE_NOT_FOUND",
+            "message": "Expense 99999 not found",
+        }
+    }
+
+
+def test_update_expense_rejects_null_amount(
+    client,
+):
+    create_response = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "500.00",
+            "category": "Food",
+            "description": "Test expense",
+            "expense_date": "2026-09-08",
+        },
+    )
+
+    expense_id = create_response.json()["id"]
+
+    response = client.patch(
+        (f"/api/v1/expenses/" f"{expense_id}"),
+        json={"amount": None},
+    )
+
+    assert response.status_code == 422

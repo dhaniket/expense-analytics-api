@@ -12,6 +12,11 @@ from app.errors.expense_errors import (
     ExpenseNotFoundError,
     InvalidExpenseDateRangeError,
 )
+from dataclasses import replace
+
+from app.schemas.expense import (
+    ExpenseUpdate,
+)
 
 
 class ExpenseService:
@@ -48,6 +53,7 @@ class ExpenseService:
         limit: int = 20,
         offset: int = 0,
         sort_by: Literal[
+            "id",
             "expense_date",
             "amount",
         ] = "expense_date",
@@ -57,14 +63,8 @@ class ExpenseService:
         ] = "desc",
     ) -> list[Expense]:
 
-        if (
-            start_date is not None
-            and end_date is not None
-            and start_date > end_date
-        ):
-            raise InvalidExpenseDateRangeError(
-                start_date=start_date, end_date=end_date
-            )
+        if start_date is not None and end_date is not None and start_date > end_date:
+            raise InvalidExpenseDateRangeError(start_date=start_date, end_date=end_date)
 
         return self.repository.list(
             category=category,
@@ -85,3 +85,25 @@ class ExpenseService:
 
         if not deleted:
             raise ExpenseNotFoundError(expense_id)
+
+    def update_expense(
+        self,
+        expense_id: int,
+        update_data: ExpenseUpdate,
+    ) -> Expense:
+
+        existing_expense = self.get_expense(expense_id)
+
+        changes = update_data.model_dump(exclude_unset=True)
+
+        updated_expense = replace(
+            existing_expense,
+            **changes,
+        )
+
+        saved_expense = self.repository.update(updated_expense)
+
+        if saved_expense is None:
+            raise ExpenseNotFoundError(expense_id)
+
+        return saved_expense

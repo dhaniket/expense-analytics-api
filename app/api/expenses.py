@@ -12,6 +12,7 @@ from fastapi import (
 from app.schemas.common import (
     PaginatedResponse,
 )
+from app.schemas.error import ErrorResponse
 from app.schemas.expense_query import (
     ExpenseQueryParams,
 )
@@ -19,6 +20,7 @@ from app.schemas.expense_query import (
 from app.schemas.expense import (
     ExpenseCreate,
     ExpenseResponse,
+    ExpenseUpdate,
 )
 
 from app.api.dependencies import (
@@ -48,6 +50,12 @@ def create_expense(
 @router.get(
     "/{expense_id}",
     response_model=ExpenseResponse,
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "Expense not found",
+        },
+    },
 )
 def get_expense(
     expense_id: Annotated[int, Path(gt=0)], service: ExpenseServiceDep
@@ -61,6 +69,12 @@ def get_expense(
 @router.get(
     "",
     response_model=PaginatedResponse[ExpenseResponse],
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid date range",
+        },
+    },
 )
 def list_expenses(
     params: Annotated[ExpenseQueryParams, Query()], service: ExpenseServiceDep
@@ -86,6 +100,12 @@ def list_expenses(
 @router.delete(
     "/{expense_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "Expense not found",
+        },
+    },
 )
 def delete_expense(
     expense_id: Annotated[int, Path(gt=0)], service: ExpenseServiceDep
@@ -94,3 +114,31 @@ def delete_expense(
     service.delete_expense(expense_id)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/{expense_id}",
+    response_model=ExpenseResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "Expense not found",
+        },
+    },
+)
+def update_expense(
+    expense_id: Annotated[
+        int,
+        Path(gt=0),
+    ],
+    update_data: ExpenseUpdate,
+    service: ExpenseServiceDep,
+) -> ExpenseResponse:
+
+    expense = service.update_expense(
+        expense_id=expense_id,
+        update_data=update_data,
+    )
+
+    return ExpenseResponse.model_validate(expense)
