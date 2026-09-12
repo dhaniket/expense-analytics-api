@@ -1,47 +1,94 @@
 from datetime import date
 from decimal import Decimal
-
-from app.db.database import get_connection
-from app.models.expense import Expense
-from app.schemas.expense import ExpenseCreate
 from typing import Literal
+
+from app.db.database import (
+    get_connection,
+)
+from app.models.expense import Expense
+from app.schemas.expense import (
+    ExpenseCreate,
+)
+
+PAISE_PER_UNIT = Decimal("100")
+MONEY_QUANTIZER = Decimal("0.01")
+
+
+def _amount_to_paise(
+    amount: Decimal,
+) -> int:
+
+    return int(amount * PAISE_PER_UNIT)
+
+
+def _paise_to_amount(
+    amount_paise: int,
+) -> Decimal:
+
+    return (Decimal(amount_paise) / PAISE_PER_UNIT).quantize(MONEY_QUANTIZER)
+
+
+def _row_to_expense(
+    row,
+) -> Expense:
+
+    return Expense(
+        id=row["id"],
+        amount=_paise_to_amount(row["amount_paise"]),
+        category=row["category"],
+        description=row["description"],
+        expense_date=row["expense_date"],
+    )
 
 
 class ExpenseRepository:
 
-    def create(self, expense_data: ExpenseCreate) -> Expense:
-        amount_paise = int(
-            expense_data.amount * (Decimal("100").quantize(Decimal("0.01")))
-        )
+    def create(
+        self,
+        expense_data: ExpenseCreate,
+    ) -> Expense:
+
+        amount_paise = _amount_to_paise(expense_data.amount)
 
         with get_connection() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO expenses (
-                    amount_paise,
-                    category,
-                    description,
-                    expense_date
+
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    INSERT INTO expenses (
+                        amount_paise,
+                        category,
+                        description,
+                        expense_date
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
+                    RETURNING
+                        id,
+                        amount_paise,
+                        category,
+                        description,
+                        expense_date
+                    """,
+                    (
+                        amount_paise,
+                        expense_data.category,
+                        expense_data.description,
+                        expense_data.expense_date,
+                    ),
                 )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    amount_paise,
-                    expense_data.category,
-                    expense_data.description,
-                    expense_data.expense_date.isoformat(),
-                ),
-            )
 
-            expense_id = cursor.lastrowid
+                row = cursor.fetchone()
 
-        return Expense(
-            id=expense_id,
-            amount=expense_data.amount,
-            category=expense_data.category,
-            description=expense_data.description,
-            expense_date=expense_data.expense_date,
-        )
+                if row is None:
+                    raise RuntimeError("Expense insert failed")
+
+                return _row_to_expense(row)
 
     def get_by_id(
         self,
@@ -49,24 +96,29 @@ class ExpenseRepository:
     ) -> Expense | None:
 
         with get_connection() as connection:
-            row = connection.execute(
-                """
-                SELECT
-                    id,
-                    amount_paise,
-                    category,
-                    description,
-                    expense_date
-                FROM expenses
-                WHERE id = ?
-                """,
-                (expense_id,),
-            ).fetchone()
 
-        if row is None:
-            return None
+            with connection.cursor() as cursor:
 
-        return self._row_to_expense(row)
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        amount_paise,
+                        category,
+                        description,
+                        expense_date
+                    FROM expenses
+                    WHERE id = %s
+                    """,
+                    (expense_id,),
+                )
+
+                row = cursor.fetchone()
+
+                if row is None:
+                    return None
+
+                return _row_to_expense(row)
 
     def list(
         self,
@@ -96,34 +148,44 @@ class ExpenseRepository:
             FROM expenses
         """
 
-        conditions = []
-        parameters = []
+        conditions: list[str] = []
+        parameters: list[object] = []
 
         if category is not None:
-            conditions.append("category = ?")
+
+            conditions.append("category = %s")
+
             parameters.append(category)
 
         if start_date is not None:
-            conditions.append("expense_date >= ?")
-            parameters.append(start_date.isoformat())
+
+            conditions.append("expense_date >= %s")
+
+            parameters.append(start_date)
 
         if end_date is not None:
-            conditions.append("expense_date <= ?")
-            parameters.append(end_date.isoformat())
+
+            conditions.append("expense_date <= %s")
+
+            parameters.append(end_date)
 
         if conditions:
+
             query += " WHERE " + " AND ".join(conditions)
 
         sort_columns = {
             "id": "id",
-            "expense_date": "expense_date",
+            "expense_date": ("expense_date"),
             "amount": "amount_paise",
         }
-        sort_column = sort_columns[sort_by]
-        order = "ASC" if sort_order == "asc" else "DESC"
 
-        query += f" ORDER BY " f"{sort_column} {order}"
-        query += " LIMIT ? OFFSET ?"
+        sort_column = sort_columns[sort_by]
+
+        sort_direction = "ASC" if sort_order == "asc" else "DESC"
+
+        query += f" ORDER BY " f"{sort_column} " f"{sort_direction}"
+
+        query += " LIMIT %s OFFSET %s"
 
         parameters.extend(
             [
@@ -133,12 +195,62 @@ class ExpenseRepository:
         )
 
         with get_connection() as connection:
-            rows = connection.execute(
-                query,
-                parameters,
-            ).fetchall()
 
-        return [self._row_to_expense(row) for row in rows]
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    query,
+                    parameters,
+                )
+
+                rows = cursor.fetchall()
+
+                return [_row_to_expense(row) for row in rows]
+
+    def update(
+        self,
+        expense: Expense,
+    ) -> Expense | None:
+
+        amount_paise = _amount_to_paise(expense.amount)
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    UPDATE expenses
+                    SET
+                        amount_paise = %s,
+                        category = %s,
+                        description = %s,
+                        expense_date = %s,
+                        updated_at =
+                            CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING
+                        id,
+                        amount_paise,
+                        category,
+                        description,
+                        expense_date
+                    """,
+                    (
+                        amount_paise,
+                        expense.category,
+                        expense.description,
+                        expense.expense_date,
+                        expense.id,
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+                if row is None:
+                    return None
+
+                return _row_to_expense(row)
 
     def delete(
         self,
@@ -146,61 +258,18 @@ class ExpenseRepository:
     ) -> bool:
 
         with get_connection() as connection:
-            cursor = connection.execute(
-                """
-                DELETE FROM expenses
-                WHERE id = ?
-                """,
-                (expense_id,),
-            )
 
-            deleted = cursor.rowcount > 0
+            with connection.cursor() as cursor:
 
-        return deleted
+                cursor.execute(
+                    """
+                    DELETE FROM expenses
+                    WHERE id = %s
+                    RETURNING id
+                    """,
+                    (expense_id,),
+                )
 
-    @staticmethod
-    def _row_to_expense(row) -> Expense:
-        amount = (Decimal(row["amount_paise"]) / Decimal("100")).quantize(
-            Decimal("0.01")
-        )
+                row = cursor.fetchone()
 
-        return Expense(
-            id=row["id"],
-            amount=amount,
-            category=row["category"],
-            description=row["description"],
-            expense_date=date.fromisoformat(row["expense_date"]),
-        )
-
-    def update(
-        self,
-        expense: Expense,
-    ) -> Expense | None:
-
-        amount_paise = int(expense.amount * 100)
-
-        with get_connection() as connection:
-
-            cursor = connection.execute(
-                """
-                UPDATE expenses
-                SET
-                    amount_paise = ?,
-                    category = ?,
-                    description = ?,
-                    expense_date = ?
-                WHERE id = ?
-                """,
-                (
-                    amount_paise,
-                    expense.category,
-                    expense.description,
-                    expense.expense_date.isoformat(),
-                    expense.id,
-                ),
-            )
-
-            if cursor.rowcount == 0:
-                return None
-
-        return expense
+                return row is not None

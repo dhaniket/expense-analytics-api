@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.expenses import router as expenses_router
-from app.db.database import initialize_database
+from app.db.database import check_database_connection
 from app.api.router import api_router
 from app.errors.handlers import (
     register_exception_handlers,
@@ -12,7 +12,7 @@ from app.errors.handlers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    initialize_database()
+    check_database_connection()
 
     yield
 
